@@ -1,0 +1,8 @@
+# Lead Response Heatmap Dashboard - Dependencies
+# Install with: pip install -r requirements.txt
+
+streamlit>=1.28.0      # Web app framework for the UI
+pandas>=2.0.0          # Data manipulation and analysis
+plotly>=5.18.0         # Interactive heatmap visualizations
+numpy>=1.24.0          # Numerical operations
+
