@@ -147,7 +147,7 @@ def create_performance_heatmap(aggregated_df, bucket_minutes, schedule_lookup=No
     all_times = sorted(aggregated_df['time_bucket'].unique())
     
     # Define day ordering (we want Monday at top, not alphabetical)
-    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     
     # Only include days that actually appear in the data
     # (handles cases where data only covers certain days)
@@ -351,7 +351,7 @@ def create_schedule_heatmap(schedule_df, bucket_minutes):
     # -------------------------------------------------------------------------
     # STEP 2: Define the days to display
     # -------------------------------------------------------------------------
-    days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday']
+    days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
     
     # -------------------------------------------------------------------------
     # STEP 3: Build the staffing matrices
