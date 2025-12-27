@@ -9,6 +9,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, time
 from typing import Optional, List, Dict, Tuple
+import pytz
 
 
 def load_leads(file_or_path, team_name: Optional[str] = None) -> pd.DataFrame:
@@ -20,13 +21,25 @@ def load_leads(file_or_path, team_name: Optional[str] = None) -> pd.DataFrame:
         team_name: Optional team name to assign if not in CSV
         
     Returns:
-        DataFrame with leads data
+        DataFrame with leads data (times converted to Pacific timezone)
     """
     df = pd.read_csv(file_or_path)
     
-    # Convert timestamps
+    # Convert timestamps - assume UTC if no timezone info
     df['received_time'] = pd.to_datetime(df['received_time'])
     df['first_contact_time'] = pd.to_datetime(df['first_contact_time'], errors='coerce')
+    
+    # If timestamps are naive (no timezone), assume UTC
+    if df['received_time'].dt.tz is None:
+        df['received_time'] = df['received_time'].dt.tz_localize('UTC')
+    
+    if df['first_contact_time'].dt.tz is None:
+        df['first_contact_time'] = df['first_contact_time'].dt.tz_localize('UTC')
+    
+    # Convert to Pacific time
+    pacific = pytz.timezone('US/Pacific')
+    df['received_time'] = df['received_time'].dt.tz_convert(pacific)
+    df['first_contact_time'] = df['first_contact_time'].dt.tz_convert(pacific)
     
     # Assign team name if provided and not in data
     if team_name and 'team' not in df.columns:
@@ -271,3 +284,120 @@ def compute_team_difference(
     
     return pivot_df[['day_of_week', 'time_bucket', 'difference', 'team_a_pct', 'team_b_pct']]
 
+
+def get_unique_managers(df: pd.DataFrame) -> List[str]:
+    """
+    Get list of unique managers from the dataset.
+    
+    Args:
+        df: DataFrame with leads data (must have ManagerPreferredName column)
+        
+    Returns:
+        Sorted list of unique manager names
+    """
+    if 'ManagerPreferredName' not in df.columns:
+        return []
+    
+    managers = df['ManagerPreferredName'].dropna().unique().tolist()
+    return sorted(managers)
+
+
+def filter_by_manager(df: pd.DataFrame, manager_name: str) -> pd.DataFrame:
+    """
+    Filter leads by manager.
+    
+    Args:
+        df: DataFrame with leads data
+        manager_name: Manager name to filter by
+        
+    Returns:
+        Filtered DataFrame with only leads from the specified manager
+    """
+    if manager_name is None or 'ManagerPreferredName' not in df.columns:
+        return df
+    
+    return df[df['ManagerPreferredName'] == manager_name].copy()
+
+
+def aggregate_by_manager_slot(df: pd.DataFrame, bucket_minutes: int = 30) -> pd.DataFrame:
+    """
+    Aggregate leads by manager, day of week, and time slot.
+    
+    Args:
+        df: DataFrame with leads data (must have ManagerPreferredName column)
+        bucket_minutes: Size of time bucket in minutes
+        
+    Returns:
+        Aggregated DataFrame with columns:
+        - manager: Manager name
+        - day_of_week: Day name (Monday, Tuesday, etc.)
+        - time_bucket: Time bucket
+        - total_leads: Count of leads in this slot
+        - contacted_within_1hr: Count contacted within 1 hour
+        - pct_within_1hr: Percentage contacted within 1 hour
+    """
+    df = df.copy()
+    
+    # Ensure we have the required columns
+    if 'response_minutes' not in df.columns or 'contact_within_1hr' not in df.columns:
+        df = compute_response_metrics(df)
+    
+    if 'ManagerPreferredName' not in df.columns:
+        raise ValueError("DataFrame must have ManagerPreferredName column")
+    
+    # Extract day of week
+    df['day_of_week'] = df['received_time'].dt.day_name()
+    
+    # Create time buckets
+    df['time_bucket'] = df['received_time'].apply(
+        lambda x: bucket_time(x, bucket_minutes)
+    )
+    
+    # Aggregate by manager, day, and time slot
+    aggregated = df.groupby(['ManagerPreferredName', 'day_of_week', 'time_bucket']).agg(
+        total_leads=('lead_id', 'count'),
+        contacted_within_1hr=('contact_within_1hr', 'sum')
+    ).reset_index()
+    
+    # Rename column for consistency
+    aggregated = aggregated.rename(columns={'ManagerPreferredName': 'manager'})
+    
+    # Calculate percentage
+    aggregated['pct_within_1hr'] = (
+        aggregated['contacted_within_1hr'] / aggregated['total_leads'] * 100
+    )
+    
+    # Fill NaN with 0 (for slots with no contacts)
+    aggregated['pct_within_1hr'] = aggregated['pct_within_1hr'].fillna(0)
+    
+    return aggregated
+
+
+def calculate_manager_rankings(aggregated_df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Calculate overall statistics and rankings for each manager.
+    
+    Args:
+        aggregated_df: Aggregated DataFrame from aggregate_by_manager_slot
+        
+    Returns:
+        DataFrame with manager rankings and statistics
+    """
+    manager_stats = aggregated_df.groupby('manager').agg(
+        total_leads=('total_leads', 'sum'),
+        total_contacted_1hr=('contacted_within_1hr', 'sum'),
+        avg_pct=('pct_within_1hr', 'mean'),
+        min_pct=('pct_within_1hr', 'min'),
+        max_pct=('pct_within_1hr', 'max')
+    ).reset_index()
+    
+    # Calculate overall percentage
+    manager_stats['overall_pct'] = (
+        manager_stats['total_contacted_1hr'] / manager_stats['total_leads'] * 100
+    )
+    
+    # Rank managers by overall percentage
+    manager_stats['rank'] = manager_stats['overall_pct'].rank(ascending=False, method='min').astype(int)
+    manager_stats = manager_stats.sort_values('rank')
+    
+    return manager_stats

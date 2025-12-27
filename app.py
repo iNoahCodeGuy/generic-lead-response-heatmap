@@ -13,7 +13,11 @@ from logic import (
     aggregate_by_team_slot,
     calculate_team_rankings,
     find_slot_winners,
-    compute_team_difference
+    compute_team_difference,
+    get_unique_managers,
+    filter_by_manager,
+    aggregate_by_manager_slot,
+    calculate_manager_rankings
 )
 from heatmap import (
     create_team_heatmap,
@@ -42,12 +46,19 @@ if 'teams' not in st.session_state:
     st.session_state.teams = []
 if 'bucket_minutes' not in st.session_state:
     st.session_state.bucket_minutes = 30
+if 'managers' not in st.session_state:
+    st.session_state.managers = []
+if 'selected_manager' not in st.session_state:
+    st.session_state.selected_manager = None
+if 'analysis_mode' not in st.session_state:
+    st.session_state.analysis_mode = "Teams"
 
 
-def load_data_from_upload(uploaded_files: List) -> Tuple[pd.DataFrame, List[str]]:
+def load_data_from_upload(uploaded_files: List) -> Tuple[pd.DataFrame, List[str], List[str]]:
     """
     Load data from uploaded files.
     Supports both single file with team column and multiple team files.
+    Returns: (combined_df, teams, managers)
     """
     all_dfs = []
     teams = []
@@ -73,13 +84,16 @@ def load_data_from_upload(uploaded_files: List) -> Tuple[pd.DataFrame, List[str]
             continue
     
     if not all_dfs:
-        return None, []
+        return None, [], []
     
     # Combine all DataFrames
     combined_df = pd.concat(all_dfs, ignore_index=True)
     unique_teams = sorted(list(set(teams)))
     
-    return combined_df, unique_teams
+    # Extract unique managers
+    managers = get_unique_managers(combined_df)
+    
+    return combined_df, unique_teams, managers
 
 
 def get_team_colors(teams: List[str]) -> Dict[str, str]:
@@ -142,7 +156,8 @@ with st.sidebar:
                             sample_files.append(file_obj)
                 
                 if sample_files:
-                    st.session_state.leads_df, st.session_state.teams = load_data_from_upload(sample_files)
+                    result = load_data_from_upload(sample_files)
+                    st.session_state.leads_df, st.session_state.teams, st.session_state.managers = result
                     st.success(f"✅ Sample data loaded! {len(st.session_state.leads_df)} leads from {len(st.session_state.teams)} team(s)")
                 else:
                     st.warning("⚠️ Sample data files not found. Please upload your own data.")
@@ -154,9 +169,10 @@ with st.sidebar:
     # Process uploaded files
     if uploaded_files:
         if st.button("📥 Load Data"):
-            st.session_state.leads_df, st.session_state.teams = load_data_from_upload(uploaded_files)
+            result = load_data_from_upload(uploaded_files)
+            st.session_state.leads_df, st.session_state.teams, st.session_state.managers = result
             if st.session_state.leads_df is not None:
-                st.success(f"Loaded {len(st.session_state.leads_df)} leads from {len(st.session_state.teams)} team(s)")
+                st.success(f"Loaded {len(st.session_state.leads_df)} leads from {len(st.session_state.teams)} team(s) and {len(st.session_state.managers)} manager(s)")
     
     # Bucket size selector
     st.subheader("Time Bucket Size")
@@ -172,12 +188,35 @@ with st.sidebar:
     )
     st.session_state.bucket_minutes = bucket_options[selected_bucket]
     
+    # Analysis mode selector
+    if st.session_state.leads_df is not None:
+        st.subheader("Analysis Mode")
+        st.session_state.analysis_mode = st.radio(
+            "Choose analysis type",
+            options=["Teams", "Managers"],
+            help="Compare by sales teams or by individual managers"
+        )
+        
+        # Manager filter (only show if in manager mode and managers exist)
+        if st.session_state.analysis_mode == "Managers" and len(st.session_state.managers) > 0:
+            st.subheader("Manager Filter")
+            manager_options = ["All Managers"] + st.session_state.managers
+            selected = st.selectbox(
+                "Filter by manager",
+                options=manager_options,
+                index=0
+            )
+            st.session_state.selected_manager = None if selected == "All Managers" else selected
+    
     # Display current data info
     if st.session_state.leads_df is not None:
         st.subheader("📈 Data Summary")
         st.write(f"**Total Leads:** {len(st.session_state.leads_df)}")
         st.write(f"**Teams:** {', '.join(st.session_state.teams)}")
+        if len(st.session_state.managers) > 0:
+            st.write(f"**Managers:** {', '.join(st.session_state.managers)}")
         st.write(f"**Date Range:** {st.session_state.leads_df['received_time'].min().date()} to {st.session_state.leads_df['received_time'].max().date()}")
+
 
 
 # Main content area
@@ -197,19 +236,34 @@ if st.session_state.leads_df is None or len(st.session_state.teams) == 0:
     - Team name derived from filename
     """)
 else:
-    # Process data
+    # Process data based on analysis mode
     with st.spinner("Processing data..."):
-        # Compute metrics
         leads_df = compute_response_metrics(st.session_state.leads_df)
         
-        # Aggregate by team and slot
-        aggregated_df = aggregate_by_team_slot(leads_df, st.session_state.bucket_minutes)
-        
-        # Calculate rankings
-        rankings_df = calculate_team_rankings(aggregated_df)
-        
-        # Get team colors
-        team_colors = get_team_colors(st.session_state.teams)
+        if st.session_state.analysis_mode == "Teams":
+            # Team-based analysis
+            aggregated_df = aggregate_by_team_slot(leads_df, st.session_state.bucket_minutes)
+            rankings_df = calculate_team_rankings(aggregated_df)
+            grouping_key = 'team'
+            items = st.session_state.teams
+            color_dict = get_team_colors(st.session_state.teams)
+        else:
+            # Manager-based analysis
+            if st.session_state.selected_manager:
+                # Filter to specific manager
+                filtered_leads = filter_by_manager(leads_df, st.session_state.selected_manager)
+                aggregated_df = aggregate_by_manager_slot(filtered_leads, st.session_state.bucket_minutes)
+                items = [st.session_state.selected_manager]
+                analysis_title = f"Manager: {st.session_state.selected_manager}"
+            else:
+                # All managers
+                aggregated_df = aggregate_by_manager_slot(leads_df, st.session_state.bucket_minutes)
+                items = st.session_state.managers
+                analysis_title = "All Managers"
+            
+            rankings_df = calculate_manager_rankings(aggregated_df)
+            grouping_key = 'manager'
+            color_dict = get_team_colors(items)  # Reuse color function for managers
     
     # Create tabs for different views
     tab1, tab2, tab3, tab4 = st.tabs([
@@ -220,18 +274,18 @@ else:
     ])
     
     with tab1:
-        st.header("Side-by-Side Team Heatmaps")
-        st.markdown("Compare all teams with consistent color scales for fair comparison.")
+        st.header(f"Side-by-Side {st.session_state.analysis_mode} Heatmaps")
+        st.markdown(f"Compare all {st.session_state.analysis_mode.lower()} with consistent color scales for fair comparison.")
         
         # Find global min/max for consistent color scale
         zmin = 0
         zmax = 100
         
-        # Create heatmaps for each team
-        cols = st.columns(min(2, len(st.session_state.teams)))
-        for idx, team in enumerate(st.session_state.teams):
-            team_data = aggregated_df[aggregated_df['team'] == team]
-            fig = create_team_heatmap(team_data, team, bucket_minutes=st.session_state.bucket_minutes, zmin=zmin, zmax=zmax)
+        # Create heatmaps for each item
+        cols = st.columns(min(2, len(items)))
+        for idx, item in enumerate(items):
+            item_data = aggregated_df[aggregated_df[grouping_key] == item]
+            fig = create_team_heatmap(item_data, item, bucket_minutes=st.session_state.bucket_minutes, zmin=zmin, zmax=zmax)
             
             col_idx = idx % 2
             with cols[col_idx]:
@@ -239,76 +293,77 @@ else:
     
     with tab2:
         st.header("Winner Heatmap")
-        st.markdown("See which team leads at each time slot.")
+        st.markdown(f"See which {st.session_state.analysis_mode.lower()} leads at each time slot.")
         
         # Find winners
         winner_df = find_slot_winners(aggregated_df)
         
         # Create winner heatmap
-        fig = create_winner_heatmap(winner_df, team_colors, bucket_minutes=st.session_state.bucket_minutes)
+        fig = create_winner_heatmap(winner_df, color_dict, bucket_minutes=st.session_state.bucket_minutes)
         st.plotly_chart(fig, use_container_width=True)
         
-        # Display team legend
-        st.markdown(create_team_legend(st.session_state.teams, team_colors), unsafe_allow_html=True)
+        # Display legend
+        st.markdown(create_team_legend(items, color_dict), unsafe_allow_html=True)
     
     with tab3:
         st.header("Head-to-Head Comparison")
-        st.markdown("Direct comparison between any two teams.")
+        st.markdown(f"Direct comparison between any two {st.session_state.analysis_mode.lower()}.")
         
-        if len(st.session_state.teams) < 2:
-            st.warning("Need at least 2 teams for head-to-head comparison.")
+        if len(items) < 2:
+            st.warning(f"Need at least 2 {st.session_state.analysis_mode.lower()} for head-to-head comparison.")
         else:
             col1, col2 = st.columns(2)
             with col1:
-                team_a = st.selectbox("Select Team A", options=st.session_state.teams, key="team_a")
+                item_a = st.selectbox(f"Select {st.session_state.analysis_mode[:-1]} A", options=items, key="item_a")
             with col2:
-                team_b = st.selectbox("Select Team B", options=st.session_state.teams, key="team_b")
+                item_b = st.selectbox(f"Select {st.session_state.analysis_mode[:-1]} B", options=items, key="item_b")
             
-            if team_a == team_b:
-                st.warning("Please select two different teams.")
+            if item_a == item_b:
+                st.warning(f"Please select two different {st.session_state.analysis_mode.lower()}.")
             else:
                 # Compute difference
-                diff_df = compute_team_difference(aggregated_df, team_a, team_b)
+                diff_df = compute_team_difference(aggregated_df, item_a, item_b)
                 
                 # Create difference heatmap
-                fig = create_difference_heatmap(diff_df, team_a, team_b, bucket_minutes=st.session_state.bucket_minutes)
+                fig = create_difference_heatmap(diff_df, item_a, item_b, bucket_minutes=st.session_state.bucket_minutes)
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # Summary statistics
                 st.subheader("Summary Statistics")
                 col1, col2, col3 = st.columns(3)
                 
-                team_a_data = aggregated_df[aggregated_df['team'] == team_a]
-                team_b_data = aggregated_df[aggregated_df['team'] == team_b]
+                item_a_data = aggregated_df[aggregated_df[grouping_key] == item_a]
+                item_b_data = aggregated_df[aggregated_df[grouping_key] == item_b]
                 
                 with col1:
                     st.metric(
-                        f"{team_a} Overall",
-                        f"{team_a_data['pct_within_1hr'].mean():.1f}%",
-                        delta=f"{team_a_data['pct_within_1hr'].mean() - team_b_data['pct_within_1hr'].mean():+.1f}%"
+                        f"{item_a} Overall",
+                        f"{item_a_data['pct_within_1hr'].mean():.1f}%",
+                        delta=f"{item_a_data['pct_within_1hr'].mean() - item_b_data['pct_within_1hr'].mean():+.1f}%"
                     )
                 with col2:
                     st.metric(
-                        f"{team_b} Overall",
-                        f"{team_b_data['pct_within_1hr'].mean():.1f}%",
-                        delta=f"{team_b_data['pct_within_1hr'].mean() - team_a_data['pct_within_1hr'].mean():+.1f}%"
+                        f"{item_b} Overall",
+                        f"{item_b_data['pct_within_1hr'].mean():.1f}%",
+                        delta=f"{item_b_data['pct_within_1hr'].mean() - item_a_data['pct_within_1hr'].mean():+.1f}%"
                     )
                 with col3:
                     avg_diff = diff_df['difference'].mean()
                     st.metric(
                         "Average Difference",
                         f"{avg_diff:+.1f}%",
-                        help=f"Positive means {team_a} is better, negative means {team_b} is better"
+                        help=f"Positive means {item_a} is better, negative means {item_b} is better"
                     )
     
     with tab4:
-        st.header("Team Leaderboard")
+        st.header(f"{st.session_state.analysis_mode} Leaderboard")
         st.markdown("Overall performance rankings and statistics.")
         
         # Display rankings table
         st.subheader("Overall Rankings")
-        display_rankings = rankings_df[['rank', 'team', 'overall_pct', 'total_leads', 'total_contacted_1hr', 'avg_pct', 'min_pct', 'max_pct']].copy()
-        display_rankings.columns = ['Rank', 'Team', 'Overall %', 'Total Leads', 'Contacted <1hr', 'Avg %', 'Min %', 'Max %']
+        col_name = 'team' if st.session_state.analysis_mode == "Teams" else 'manager'
+        display_rankings = rankings_df[['rank', col_name, 'overall_pct', 'total_leads', 'total_contacted_1hr', 'avg_pct', 'min_pct', 'max_pct']].copy()
+        display_rankings.columns = ['Rank', st.session_state.analysis_mode[:-1], 'Overall %', 'Total Leads', 'Contacted <1hr', 'Avg %', 'Min %', 'Max %']
         display_rankings['Overall %'] = display_rankings['Overall %'].round(1)
         display_rankings['Avg %'] = display_rankings['Avg %'].round(1)
         display_rankings['Min %'] = display_rankings['Min %'].round(1)
@@ -316,20 +371,20 @@ else:
         
         st.dataframe(display_rankings, use_container_width=True, hide_index=True)
         
-        # Best and worst time slots per team
-        st.subheader("Best and Worst Time Slots by Team")
-        for team in st.session_state.teams:
-            team_data = aggregated_df[aggregated_df['team'] == team].copy()
-            if len(team_data) > 0:
-                best_slot = team_data.loc[team_data['pct_within_1hr'].idxmax()]
-                worst_slot = team_data.loc[team_data['pct_within_1hr'].idxmin()]
+        # Best and worst time slots per item
+        st.subheader(f"Best and Worst Time Slots by {st.session_state.analysis_mode[:-1]}")
+        for item in items:
+            item_data = aggregated_df[aggregated_df[grouping_key] == item].copy()
+            if len(item_data) > 0:
+                best_slot = item_data.loc[item_data['pct_within_1hr'].idxmax()]
+                worst_slot = item_data.loc[item_data['pct_within_1hr'].idxmin()]
                 
                 col1, col2 = st.columns(2)
                 with col1:
-                    st.markdown(f"**{team} - Best Slot:**")
+                    st.markdown(f"**{item} - Best Slot:**")
                     st.write(f"{best_slot['day_of_week']} {best_slot['time_bucket'].strftime('%H:%M')}: {best_slot['pct_within_1hr']:.1f}% ({best_slot['total_leads']} leads)")
                 with col2:
-                    st.markdown(f"**{team} - Worst Slot:**")
+                    st.markdown(f"**{item} - Worst Slot:**")
                     st.write(f"{worst_slot['day_of_week']} {worst_slot['time_bucket'].strftime('%H:%M')}: {worst_slot['pct_within_1hr']:.1f}% ({worst_slot['total_leads']} leads)")
                 st.divider()
 
