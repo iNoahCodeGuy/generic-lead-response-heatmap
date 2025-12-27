@@ -231,7 +231,7 @@ else:
         cols = st.columns(min(2, len(st.session_state.teams)))
         for idx, team in enumerate(st.session_state.teams):
             team_data = aggregated_df[aggregated_df['team'] == team]
-            fig = create_team_heatmap(team_data, team, zmin=zmin, zmax=zmax)
+            fig = create_team_heatmap(team_data, team, bucket_minutes=st.session_state.bucket_minutes, zmin=zmin, zmax=zmax)
             
             col_idx = idx % 2
             with cols[col_idx]:
@@ -245,7 +245,7 @@ else:
         winner_df = find_slot_winners(aggregated_df)
         
         # Create winner heatmap
-        fig = create_winner_heatmap(winner_df, team_colors)
+        fig = create_winner_heatmap(winner_df, team_colors, bucket_minutes=st.session_state.bucket_minutes)
         st.plotly_chart(fig, use_container_width=True)
         
         # Display team legend
@@ -271,7 +271,7 @@ else:
                 diff_df = compute_team_difference(aggregated_df, team_a, team_b)
                 
                 # Create difference heatmap
-                fig = create_difference_heatmap(diff_df, team_a, team_b)
+                fig = create_difference_heatmap(diff_df, team_a, team_b, bucket_minutes=st.session_state.bucket_minutes)
                 st.plotly_chart(fig, use_container_width=True)
                 
                 # Summary statistics

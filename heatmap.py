@@ -10,11 +10,32 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from typing import List, Dict, Optional
 import numpy as np
+from datetime import time
+
+
+def generate_all_time_buckets(bucket_minutes: int = 30) -> List[time]:
+    """
+    Generate all possible time buckets for a 24-hour period.
+    
+    Args:
+        bucket_minutes: Size of time bucket in minutes
+        
+    Returns:
+        List of time objects for all buckets in a day
+    """
+    buckets = []
+    total_minutes = 24 * 60
+    for minutes in range(0, total_minutes, bucket_minutes):
+        hour = minutes // 60
+        minute = minutes % 60
+        buckets.append(time(hour, minute))
+    return buckets
 
 
 def create_team_heatmap(
     team_df: pd.DataFrame, 
     team_name: str,
+    bucket_minutes: int = 30,
     zmin: float = 0,
     zmax: float = 100
 ) -> go.Figure:
@@ -24,6 +45,7 @@ def create_team_heatmap(
     Args:
         team_df: Aggregated DataFrame for one team (from aggregate_by_team_slot)
         team_name: Name of the team
+        bucket_minutes: Size of time bucket in minutes (to generate complete grid)
         zmin: Minimum value for color scale
         zmax: Maximum value for color scale
         
@@ -38,19 +60,22 @@ def create_team_heatmap(
         fill_value=0
     )
     
-    # Order days of week
+    # Always show all 7 days of the week
     day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    days_in_data = [d for d in day_order if d in pivot_df.index]
-    pivot_df = pivot_df.reindex(days_in_data)
+    pivot_df = pivot_df.reindex(day_order, fill_value=0)
+    
+    # Generate all possible time buckets for complete grid
+    all_time_buckets = generate_all_time_buckets(bucket_minutes)
+    pivot_df = pivot_df.reindex(columns=all_time_buckets, fill_value=0)
     
     # Format time labels
-    time_labels = [t.strftime('%H:%M') for t in sorted(pivot_df.columns)]
+    time_labels = [t.strftime('%H:%M') for t in all_time_buckets]
     
     # Create heatmap
     fig = go.Figure(data=go.Heatmap(
         z=pivot_df.values,
         x=time_labels,
-        y=days_in_data,
+        y=day_order,
         colorscale=[
             [0.0, '#d73027'],    # Red for 0%
             [0.5, '#fee08b'],    # Yellow for 50%
@@ -78,7 +103,8 @@ def create_team_heatmap(
 
 def create_winner_heatmap(
     winner_df: pd.DataFrame,
-    team_colors: Dict[str, str]
+    team_colors: Dict[str, str],
+    bucket_minutes: int = 30
 ) -> go.Figure:
     """
     Create a heatmap showing which team wins each time slot.
@@ -86,6 +112,7 @@ def create_winner_heatmap(
     Args:
         winner_df: DataFrame from find_slot_winners
         team_colors: Dictionary mapping team names to colors
+        bucket_minutes: Size of time bucket in minutes (to generate complete grid)
         
     Returns:
         Plotly Figure with winner heatmap
@@ -106,14 +133,18 @@ def create_winner_heatmap(
         aggfunc='first'
     )
     
-    # Order days
+    # Always show all 7 days of the week
     day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    days_in_data = [d for d in day_order if d in pivot_teams.index]
-    pivot_teams = pivot_teams.reindex(days_in_data)
-    pivot_pct = pivot_pct.reindex(days_in_data)
+    pivot_teams = pivot_teams.reindex(day_order)
+    pivot_pct = pivot_pct.reindex(day_order)
+    
+    # Generate all possible time buckets for complete grid
+    all_time_buckets = generate_all_time_buckets(bucket_minutes)
+    pivot_teams = pivot_teams.reindex(columns=all_time_buckets)
+    pivot_pct = pivot_pct.reindex(columns=all_time_buckets)
     
     # Format time labels
-    time_labels = [t.strftime('%H:%M') for t in sorted(pivot_teams.columns)]
+    time_labels = [t.strftime('%H:%M') for t in all_time_buckets]
     
     # Create numeric matrix for colors (map teams to numbers)
     # Filter out NaN values
@@ -134,9 +165,9 @@ def create_winner_heatmap(
     
     # Create hover text with all team info
     hover_text = []
-    for day in days_in_data:
+    for day in day_order:
         row_text = []
-        for time_bucket in sorted(pivot_teams.columns):
+        for time_bucket in all_time_buckets:
             slot_data = winner_df[
                 (winner_df['day_of_week'] == day) & 
                 (winner_df['time_bucket'] == time_bucket)
@@ -152,7 +183,7 @@ def create_winner_heatmap(
     fig = go.Figure(data=go.Heatmap(
         z=numeric_matrix.values,
         x=time_labels,
-        y=days_in_data,
+        y=day_order,
         colorscale=colorscale,
         text=hover_text,
         texttemplate='',
@@ -180,7 +211,8 @@ def create_winner_heatmap(
 def create_difference_heatmap(
     diff_df: pd.DataFrame,
     team_a: str,
-    team_b: str
+    team_b: str,
+    bucket_minutes: int = 30
 ) -> go.Figure:
     """
     Create a heatmap showing the difference between two teams.
@@ -189,6 +221,7 @@ def create_difference_heatmap(
         diff_df: DataFrame from compute_team_difference
         team_a: First team name
         team_b: Second team name
+        bucket_minutes: Size of time bucket in minutes (to generate complete grid)
         
     Returns:
         Plotly Figure with difference heatmap
@@ -201,19 +234,22 @@ def create_difference_heatmap(
         fill_value=0
     )
     
-    # Order days
+    # Always show all 7 days of the week
     day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    days_in_data = [d for d in day_order if d in pivot_df.index]
-    pivot_df = pivot_df.reindex(days_in_data)
+    pivot_df = pivot_df.reindex(day_order, fill_value=0)
+    
+    # Generate all possible time buckets for complete grid
+    all_time_buckets = generate_all_time_buckets(bucket_minutes)
+    pivot_df = pivot_df.reindex(columns=all_time_buckets, fill_value=0)
     
     # Format time labels
-    time_labels = [t.strftime('%H:%M') for t in sorted(pivot_df.columns)]
+    time_labels = [t.strftime('%H:%M') for t in all_time_buckets]
     
     # Create hover text with both team percentages
     hover_text = []
-    for day in days_in_data:
+    for day in day_order:
         row_text = []
-        for time_bucket in sorted(diff_df['time_bucket'].unique()):
+        for time_bucket in all_time_buckets:
             slot_data = diff_df[
                 (diff_df['day_of_week'] == day) & 
                 (diff_df['time_bucket'] == time_bucket)
@@ -239,7 +275,7 @@ def create_difference_heatmap(
     fig = go.Figure(data=go.Heatmap(
         z=pivot_df.values,
         x=time_labels,
-        y=days_in_data,
+        y=day_order,
         colorscale=[
             [0.0, '#2166ac'],    # Blue (Team A better)
             [0.5, '#ffffff'],    # White (tied)
