@@ -53,27 +53,59 @@ def create_team_heatmap(
         Plotly Figure with heatmap
     """
     # Pivot to create matrix (days x time buckets)
-    pivot_df = team_df.pivot_table(
+    pivot_pct = team_df.pivot_table(
         index='day_of_week',
         columns='time_bucket',
         values='pct_within_1hr',
         fill_value=0
     )
     
+    pivot_contacted = team_df.pivot_table(
+        index='day_of_week',
+        columns='time_bucket',
+        values='contacted_within_1hr',
+        fill_value=0,
+        aggfunc='sum'
+    )
+    
+    pivot_total = team_df.pivot_table(
+        index='day_of_week',
+        columns='time_bucket',
+        values='total_leads',
+        fill_value=0,
+        aggfunc='sum'
+    )
+    
     # Always show all 7 days of the week
     day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-    pivot_df = pivot_df.reindex(day_order, fill_value=0)
+    pivot_pct = pivot_pct.reindex(day_order, fill_value=0)
+    pivot_contacted = pivot_contacted.reindex(day_order, fill_value=0)
+    pivot_total = pivot_total.reindex(day_order, fill_value=0)
     
     # Generate all possible time buckets for complete grid
     all_time_buckets = generate_all_time_buckets(bucket_minutes)
-    pivot_df = pivot_df.reindex(columns=all_time_buckets, fill_value=0)
+    pivot_pct = pivot_pct.reindex(columns=all_time_buckets, fill_value=0)
+    pivot_contacted = pivot_contacted.reindex(columns=all_time_buckets, fill_value=0)
+    pivot_total = pivot_total.reindex(columns=all_time_buckets, fill_value=0)
     
     # Format time labels
     time_labels = [t.strftime('%H:%M') for t in all_time_buckets]
     
+    # Create text with counts and percentage
+    text_array = []
+    for i in range(len(day_order)):
+        row = []
+        for j in range(len(all_time_buckets)):
+            contacted = int(pivot_contacted.iloc[i, j])
+            total = int(pivot_total.iloc[i, j])
+            pct = pivot_pct.iloc[i, j]
+            text = f"{contacted}/{total}<br>{pct:.0f}%"
+            row.append(text)
+        text_array.append(row)
+    
     # Create heatmap
     fig = go.Figure(data=go.Heatmap(
-        z=pivot_df.values,
+        z=pivot_pct.values,
         x=time_labels,
         y=day_order,
         colorscale=[
@@ -83,20 +115,25 @@ def create_team_heatmap(
         ],
         zmin=zmin,
         zmax=zmax,
-        text=[[f"{val:.1f}%" for val in row] for row in pivot_df.values],
+        text=text_array,
         texttemplate='%{text}',
-        textfont={"size": 10},
-        hovertemplate='<b>%{y}</b><br>Time: %{x}<br>Percentage: %{z:.1f}%<extra></extra>',
-        colorbar=dict(title="% Within 1hr")
+        textfont={"size": 10, "color": "black"},
+        hovertemplate='<b>%{y} at %{x}</b><br>Contacted: %{customdata[0]}<br>Total Leads: %{customdata[1]}<br>Percentage: %{z:.1f}%<extra></extra>',
+        customdata=np.stack([pivot_contacted.values.astype(int), pivot_total.values.astype(int)], axis=-1),
+        colorbar=dict(title="% Within 1hr", thickness=15)
     ))
     
     fig.update_layout(
-        title=f'{team_name} - Response Performance Heatmap',
+        title=dict(text=f'{team_name} - Response Performance Heatmap', font=dict(size=18)),
         xaxis_title='Time of Day',
         yaxis_title='Day of Week',
         height=500,
-        width=1000
+        margin=dict(l=100, r=60, t=80, b=80)
     )
+    
+    # Make axis labels readable
+    fig.update_xaxes(tickangle=45, tickfont=dict(size=10))
+    fig.update_yaxes(tickfont=dict(size=12))
     
     return fig
 
@@ -198,12 +235,15 @@ def create_winner_heatmap(
     ))
     
     fig.update_layout(
-        title='Winner Heatmap - Which Team Leads Each Time Slot',
+        title=dict(text='Winner Heatmap - Which Team Leads Each Time Slot', font=dict(size=18)),
         xaxis_title='Time of Day',
         yaxis_title='Day of Week',
-        height=500,
-        width=1000
+        height=550,
+        margin=dict(l=100, r=60, t=80, b=80)
     )
+    
+    fig.update_xaxes(tickangle=45, tickfont=dict(size=10))
+    fig.update_yaxes(tickfont=dict(size=12))
     
     return fig
 
@@ -290,12 +330,111 @@ def create_difference_heatmap(
     ))
     
     fig.update_layout(
-        title=f'Head-to-Head: {team_a} vs {team_b}',
+        title=dict(text=f'Head-to-Head: {team_a} vs {team_b}', font=dict(size=18)),
         xaxis_title='Time of Day',
         yaxis_title='Day of Week',
-        height=500,
-        width=1000
+        height=550,
+        margin=dict(l=100, r=60, t=80, b=80)
     )
+    
+    fig.update_xaxes(tickangle=45, tickfont=dict(size=10))
+    fig.update_yaxes(tickfont=dict(size=12))
+    
+    return fig
+
+
+def create_comparison_heatmap(
+    comparison_df: pd.DataFrame,
+    target_name: str,
+    bucket_minutes: int = 30
+) -> go.Figure:
+    """
+    Create a heatmap showing where target beats average (green) vs needs improvement (red).
+    Simplified: no text overlay, details shown on hover only.
+    """
+    # Pivot to create matrix
+    pivot_diff = comparison_df.pivot_table(
+        index='day_of_week',
+        columns='time_bucket',
+        values='difference',
+        fill_value=0
+    )
+    
+    pivot_target_pct = comparison_df.pivot_table(
+        index='day_of_week',
+        columns='time_bucket',
+        values='target_pct',
+        fill_value=0
+    )
+    
+    pivot_avg = comparison_df.pivot_table(
+        index='day_of_week',
+        columns='time_bucket',
+        values='avg_others',
+        fill_value=0
+    )
+    
+    # Always show all 7 days of the week
+    day_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
+    pivot_diff = pivot_diff.reindex(day_order, fill_value=0)
+    pivot_target_pct = pivot_target_pct.reindex(day_order, fill_value=0)
+    pivot_avg = pivot_avg.reindex(day_order, fill_value=0)
+    
+    # Generate all possible time buckets for complete grid
+    all_time_buckets = generate_all_time_buckets(bucket_minutes)
+    pivot_diff = pivot_diff.reindex(columns=all_time_buckets, fill_value=0)
+    pivot_target_pct = pivot_target_pct.reindex(columns=all_time_buckets, fill_value=0)
+    pivot_avg = pivot_avg.reindex(columns=all_time_buckets, fill_value=0)
+    
+    # Format time labels
+    time_labels = [t.strftime('%H:%M') for t in all_time_buckets]
+    
+    # Create hover text (details on hover only, no cell text)
+    hover_text = []
+    for i, day in enumerate(day_order):
+        row = []
+        for j, tb in enumerate(all_time_buckets):
+            target_pct = pivot_target_pct.iloc[i, j]
+            avg_pct = pivot_avg.iloc[i, j]
+            diff = pivot_diff.iloc[i, j]
+            text = f"<b>{day} {tb.strftime('%H:%M')}</b><br>"
+            text += f"{target_name}: {target_pct:.1f}%<br>"
+            text += f"Others: {avg_pct:.1f}%<br>"
+            text += f"Diff: {diff:+.1f}%"
+            row.append(text)
+        hover_text.append(row)
+    
+    # Find max absolute difference for symmetric color scale
+    max_abs_diff = max(abs(pivot_diff.values.min()), abs(pivot_diff.values.max()), 1)
+    
+    # Green for beating others, Red for behind (no text overlay)
+    fig = go.Figure(data=go.Heatmap(
+        z=pivot_diff.values,
+        x=time_labels,
+        y=day_order,
+        colorscale=[
+            [0.0, '#d73027'],    # Red (behind)
+            [0.5, '#ffffbf'],    # Yellow (even)
+            [1.0, '#1a9850']     # Green (ahead)
+        ],
+        zmin=-max_abs_diff,
+        zmax=max_abs_diff,
+        text=hover_text,
+        texttemplate='',  # No text on cells
+        hovertemplate='%{text}<extra></extra>',
+        colorbar=dict(title="vs Others", thickness=15)
+    ))
+    
+    fig.update_layout(
+        title=dict(text=f'{target_name} vs Average of Others', font=dict(size=18)),
+        xaxis_title='Time of Day',
+        yaxis_title='Day of Week',
+        height=550,
+        margin=dict(l=100, r=60, t=80, b=80)
+    )
+    
+    fig.update_xaxes(tickangle=45, tickfont=dict(size=10))
+    fig.update_yaxes(tickfont=dict(size=12))
     
     return fig
 
