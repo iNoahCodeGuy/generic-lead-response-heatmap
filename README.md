@@ -1,5 +1,7 @@
 # Lead Response Heatmap Dashboard
 
+![Lead Response Heatmap Preview](sample_data/heatmap_preview.png)
+
 ## The Fundamental Problem
 
 Before we examine the solution, we must understand the problem with perfect clarity.
@@ -193,7 +195,7 @@ The user sees a heatmap. Behind it, these six steps execute in sequence.
 ├── requirements.txt       # Dependencies with version constraints
 │
 └── sample_data/
-    ├── leads.csv          # 110 sample lead records
+    ├── leads.csv          # ~1,000 sample lead records (3 weeks)
     └── schedule.csv       # Staff shift schedules for 5 reps
 ```
 
